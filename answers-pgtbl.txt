@@ -1,0 +1,5 @@
+1. sysinfo could be made faster using shared page too. Kernel could alloc 
+a page to store these infos and map to a proc's address space which avoids 
+kernel crossings.
+
+2. 
