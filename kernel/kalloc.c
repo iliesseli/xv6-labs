@@ -23,10 +23,15 @@ struct {
   struct run *freelist;
 } kmem;
 
+int refcount[PHYSTOP / PGSIZE];
+
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  for (int i = 0;i < PHYSTOP / PGSIZE; i++) {
+    refcount[i] = 0;
+  }
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -51,14 +56,18 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
-
   r = (struct run*)pa;
 
   acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
+  if (refcount[(uint64)pa / PGSIZE] > 0) {
+    refcount[(uint64)pa / PGSIZE] --;
+  }
+  if (refcount[(uint64)pa / PGSIZE] == 0) {
+    // Fill with junk to catch dangling refs.
+    memset(pa, 1, PGSIZE);
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+   }
   release(&kmem.lock);
 }
 
@@ -76,7 +85,24 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r) {
     memset((char*)r, 5, PGSIZE); // fill with junk
+    refcount[(uint64)r / PGSIZE] = 1;
+  }
   return (void*)r;
+}
+
+void
+krefup(void * pa) {
+  refcount[(uint64)pa / PGSIZE] ++;
+}
+
+void 
+krefdown(void * pa) {
+  if (refcount[(uint64)pa / PGSIZE] > 0) {
+     refcount[(uint64)pa / PGSIZE] --;
+  }
+  if ( refcount[(uint64)pa / PGSIZE] == 0) {
+    kfree(pa);
+  }
 }
