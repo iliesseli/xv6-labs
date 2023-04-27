@@ -1,0 +1,2 @@
+2. insert() function could fail to insert keys.
+because it could override by other thread.
