@@ -484,3 +484,112 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void) {
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+  if (argaddr(0, &addr) < 0) {
+    return -1;
+  }
+  if (argint(1, &length) < 0) {
+    return -1;
+  }
+  if (argint(2, &prot) < 0) {
+    return -1;
+  }
+  if (argint(3, &flags) < 0) {
+    return -1;
+  }
+  if (argint(4, &fd) < 0) {
+    return -1;
+  }
+  if (argint(5, &offset) < 0) {
+    return -1;
+  }
+
+  struct proc* p = myproc();
+  int idx = -1;
+  for (int i = 0; i < 16; i++) {
+    if (!p->vmas[i].used) {
+      idx = i;
+      break;
+    }
+  }
+
+ if ((prot & PROT_READ) != 0 && !p->ofile[fd]->readable && (flags & MAP_SHARED) != 0) {
+  return -1;
+ }
+ if ((prot & PROT_WRITE) != 0 && !p->ofile[fd]->writable && (flags & MAP_SHARED) != 0) {
+  return -1;
+ }
+
+  if (idx == - 1) {
+    printf("unable to find free vma\n");
+    return -1;
+  } else {
+      printf("fill in vma idx = %d\n", idx);
+      p->vmas[idx].used = 1;
+      p->vmas[idx].address = p->sz;
+      p->vmas[idx].flags = flags;
+      p->vmas[idx].length = length;
+      p->vmas[idx].offset = offset;
+      p->vmas[idx].prot = prot;
+      p->vmas[idx].target_file = p->ofile[fd];
+
+      filedup(p->ofile[fd]);
+      p->sz += length;
+  }
+
+  return p->vmas[idx].address;
+}
+
+uint64 
+sys_munmap(void) {
+  uint64 addr;
+  int length;
+  if (argaddr(0, &addr) < 0) {
+    return -1;
+  }
+  if (argint(1, &length) < 0) {
+    return -1;
+  }
+  printf("munmap\n");
+  struct proc* p = myproc();
+  for (int i = 0; i < 16; i++) {
+    if (p->vmas[i].used && addr >= p->vmas[i].address && addr + length < p->vmas[i].address + p->vmas[i].length) {
+      uint64 addr_tmp = PGROUNDDOWN(addr);
+      while (addr_tmp < p->vmas[i].address + p->vmas[i].length) {
+        if (walkaddr(p->pagetable, addr_tmp) == 0) {
+          addr_tmp += PGSIZE;
+          continue;
+        }
+        pte_t * pte = walk(p->pagetable, addr_tmp, 0);
+        if ((*pte & (1L << 7)) != 0 && (p->vmas[i].flags & MAP_SHARED) != 0) {
+          p->vmas[i].target_file->off = p->vmas[i].offset + addr_tmp - p->vmas[i].address;
+          filewrite(p->vmas[i].target_file, addr_tmp, PGSIZE);
+        }
+        uvmunmap(p->pagetable, addr_tmp, 1, 0);
+        addr_tmp += PGSIZE;
+      }
+
+      if (addr == p->vmas[i].address) {
+        if (length >= p->vmas[i].length) {
+          p->vmas[i].used = 0;
+          fileclose(p->vmas[i].target_file);
+        } else {
+          p->vmas[i].address = addr + length;
+          p->vmas[i].length -= length;
+        }
+      } else {
+        p->vmas[i].length -= length;
+      }
+
+      break;
+    }
+  }
+
+
+  printf("nvmunmap success\n");
+  return 0;
+}
